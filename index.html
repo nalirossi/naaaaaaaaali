@@ -3032,7 +3032,105 @@
       };
       img.src = 'image_eebb11.jpg';
     }
+// ==========================================
+    // SISTEMA DE EXPORTACIÓN DE GRÁFICOS (FIX)
+    // ==========================================
+    document.getElementById('executeExportBtn').addEventListener('click', () => {
+      const btn = document.getElementById('executeExportBtn');
+      const originalText = btn.textContent;
+      const format = document.getElementById('exportFormatSelect').value;
+      const quality = document.getElementById('exportQualitySelect').value;
+      
+      const isAudioMode = (document.getElementById('tabAudio').classList.contains('active') || audioVisAnimId !== null);
+      let src = isAudioMode && document.getElementById('audioRawSource').value !== 'custom_media' 
+                ? { el: proceduralCanvas, width: proceduralCanvas.width, height: proceduralCanvas.height } 
+                : originalImage;
 
+      if (!src && videoEl.videoWidth) {
+         src = { el: videoEl, width: videoEl.videoWidth, height: videoEl.videoHeight };
+      }
+
+      if (!src) {
+        alert(currentLang === 'es' ? "Cargá un archivo o iniciá una síntesis primero." : "Load a file or start synthesis first.");
+        return;
+      }
+
+      btn.textContent = 'PROCESANDO...';
+      btn.style.pointerEvents = 'none';
+      downloadStatus.innerHTML = '<div class="status-badge error">RENDERIZANDO ALTA RESOLUCIÓN... ESPERE</div>';
+
+      // Definir la dimensión máxima en píxeles según la calidad elegida
+      let targetMaxDim = PREVIEW_BASE_MAX_DIM; 
+      if (quality === 'standard') targetMaxDim = 1600;
+      else if (quality === 'high') targetMaxDim = 3600;
+      else if (quality === 'ultra') targetMaxDim = 6000;
+      else if (quality === 'max') targetMaxDim = 8500;
+      else if (quality === 'colossal') targetMaxDim = 12000;
+
+      // El timeout le da un respiro al navegador para mostrar el cartel de "PROCESANDO..."
+      setTimeout(async () => {
+        try {
+          if (format === 'svg') {
+            const svgBlob = generatePureVectorSVG(src, targetMaxDim, 15);
+            triggerDownload(svgBlob, `naali-vector-${Date.now()}.svg`);
+          } else {
+            // Fuerzo al motor a renderizar en la resolución colosal temporalmente
+            render(src, targetMaxDim, 15);
+            
+            if (format === 'pdf') {
+              const { jsPDF } = window.jspdf;
+              const doc = new jsPDF({
+                orientation: canvas.width > canvas.height ? 'l' : 'p',
+                unit: 'px',
+                format: [canvas.width, canvas.height]
+              });
+              const imgData = canvas.toDataURL('image/jpeg', 0.95);
+              doc.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+              doc.save(`naali-document-${Date.now()}.pdf`);
+            } else {
+              // Los canvas de navegador no exportan TIFF nativo, decantamos a PNG sin pérdida
+              const isJpg = format === 'jpg';
+              const mimeType = isJpg ? 'image/jpeg' : 'image/png';
+              const ext = isJpg ? 'jpg' : 'png';
+              
+              canvas.toBlob((blob) => {
+                triggerDownload(blob, `naali-render-${Date.now()}.${ext}`);
+              }, mimeType, isJpg ? 0.95 : undefined);
+            }
+            
+            // Retorna al render de baja resolución para no trabar el navegador
+            setTimeout(() => render(), 200);
+          }
+          
+          downloadStatus.innerHTML = '<div class="status-badge success">EXPORTACIÓN COMPLETADA</div>';
+        } catch (err) {
+          downloadStatus.innerHTML = `<div class="status-badge error">ERROR DE RENDER: ${err.message}</div>`;
+        }
+        
+        btn.textContent = originalText;
+        btn.style.pointerEvents = 'auto';
+      }, 100);
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      originalImage = null;
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      document.getElementById('previewPlaceholder').style.display = 'flex';
+      downloadStatus.innerHTML = '';
+      if(videoEl) videoEl.pause();
+      if(audioDirectPlayer) audioDirectPlayer.pause();
+    });
+
+    function triggerDownload(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
     updateColorSchemeUI();
     syncAllHexInputs();
     updateValueLabels();
